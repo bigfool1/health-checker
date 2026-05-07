@@ -19,7 +19,8 @@ from health_tracker.graph.nodes.set_plan import water as plan_water
 from health_tracker.graph.nodes.set_plan import diet as plan_diet
 from health_tracker.graph.nodes.set_plan import sport as plan_sport
 from health_tracker.graph.nodes.set_plan import mood as plan_mood
-from health_tracker.graph.nodes.intent import _parse_json, _extract_text
+from health_tracker.graph.nodes.intent import _parse_json, _extract_text, _safe_confidence
+from health_tracker.graph.nodes._utils import parse_amount_ml, parse_duration
 from health_tracker.graph.tools import reset_storage, get_all_records
 
 
@@ -100,6 +101,28 @@ def test_route_record_type_unknown():
 
 def test_route_set_plan_type_sport():
     assert route_set_plan_type({"type": "sport"}) == "set_plan_sport"
+
+
+# ── confidence ─────────────────────────────────────────
+
+def test_safe_confidence_float():
+    assert _safe_confidence(0.85) == 0.85
+
+def test_safe_confidence_int():
+    assert _safe_confidence(1) == 1.0
+
+def test_safe_confidence_string():
+    assert _safe_confidence("0.6") == 0.6
+
+def test_safe_confidence_none():
+    assert _safe_confidence(None) is None
+
+def test_safe_confidence_clamp():
+    assert _safe_confidence(1.5) == 1.0
+    assert _safe_confidence(-0.3) == 0.0
+
+def test_safe_confidence_invalid():
+    assert _safe_confidence("nope") is None
 
 
 # ── JSON parsing ───────────────────────────────────────
@@ -387,6 +410,68 @@ async def test_graph_with_mock_llm_set_plan():
     assert "30" in result["response"]
 
 
+# ── confidence downgrade ────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_graph_low_confidence_downgraded():
+    """LLM returns low confidence → action forced to ambiguous."""
+    from unittest.mock import MagicMock, AsyncMock
+    from health_tracker.graph.builder import build_graph
+
+    low_conf = MagicMock()
+    low_conf.content = [{"type": "text", "text": '{"action": "record", "type": "water", "confidence": 0.45, "entities": {"beverage_name": "水"}}'}]
+
+    mock_llm = MagicMock()
+    mock_llm.ainvoke = AsyncMock(return_value=low_conf)
+
+    graph = build_graph(mock_llm)
+    state: GraphState = {"user_input": "...", "context": "", "action": None, "type": None,
+                         "entities": {}, "pending_entities": {}, "missing_fields": [], "response": ""}
+    result = await graph.ainvoke(state)
+    assert result["action"] == "ambiguous"
+    assert result["type"] == "none"
+
+
+@pytest.mark.asyncio
+async def test_graph_high_confidence_unchanged():
+    """LLM returns high confidence → action passes through unchanged."""
+    from unittest.mock import MagicMock, AsyncMock
+    from health_tracker.graph.builder import build_graph
+
+    high_conf = MagicMock()
+    high_conf.content = [{"type": "text", "text": '{"action": "record", "type": "water", "confidence": 0.85, "entities": {"beverage_name": "水", "amount_desc": "一杯"}}'}]
+
+    mock_llm = MagicMock()
+    mock_llm.ainvoke = AsyncMock(return_value=high_conf)
+
+    graph = build_graph(mock_llm)
+    state: GraphState = {"user_input": "喝了一杯水", "context": "", "action": None, "type": None,
+                         "entities": {}, "pending_entities": {}, "missing_fields": [], "response": ""}
+    result = await graph.ainvoke(state)
+    assert result["action"] == "record"
+    assert result["type"] == "water"
+
+
+@pytest.mark.asyncio
+async def test_graph_no_confidence_not_downgraded():
+    """LLM returns no confidence field → backward compatible, not downgraded."""
+    from unittest.mock import MagicMock, AsyncMock
+    from health_tracker.graph.builder import build_graph
+
+    no_conf = MagicMock()
+    no_conf.content = [{"type": "text", "text": '{"action": "record", "type": "water", "entities": {"beverage_name": "水", "amount_desc": "一杯"}}'}]
+
+    mock_llm = MagicMock()
+    mock_llm.ainvoke = AsyncMock(return_value=no_conf)
+
+    graph = build_graph(mock_llm)
+    state: GraphState = {"user_input": "喝了一杯水", "context": "", "action": None, "type": None,
+                         "entities": {}, "pending_entities": {}, "missing_fields": [], "response": ""}
+    result = await graph.ainvoke(state)
+    assert result["action"] == "record"
+    assert result["type"] == "water"
+
+
 # ── session persistence ────────────────────────────────
 
 @pytest.mark.asyncio
@@ -492,3 +577,85 @@ async def test_slot_fill_vague_value_filtered():
     # "东西" in WATER_GENERIC → filtered out → missing beverage_name
     assert "beverage_name" in result["missing_fields"]
     assert "饮品" in result["response"]
+
+
+# ── edge case: amount parsing ───────────────────────────
+
+def test_parse_amount_ml_standard():
+    assert parse_amount_ml("300ml") == 300
+    assert parse_amount_ml("1.5l") == 1500
+    assert parse_amount_ml("一杯") == 250
+    assert parse_amount_ml("两杯") == 500
+    assert parse_amount_ml("半瓶") == 250
+
+
+def test_parse_amount_ml_unusual():
+    assert parse_amount_ml("一大口") is None       # unsupported unit
+    assert parse_amount_ml("一点点") is None       # vague
+    assert parse_amount_ml("") is None
+    assert parse_amount_ml(None) is None           # type: ignore
+
+
+def test_parse_duration_edge():
+    assert parse_duration("半小时") == 30
+    assert parse_duration("1小时30分钟") == 90
+    assert parse_duration("45") == 45
+    assert parse_duration("一个半小时") == 30      # "半小时" substring matched
+    assert parse_duration("一会儿") is None        # vague
+    assert parse_duration(None) is None
+
+
+# ── edge case: slot-fill boundaries ─────────────────────
+
+@pytest.mark.asyncio
+async def test_slot_fill_water_unusual_amount_triggers_ask():
+    """Unparseable amount (一大口) → missing amount → ask."""
+    state = {"entities": {"beverage_name": "水", "amount_desc": "一大口"}, "pending_entities": {}}
+    result = await rec_water.run(state)
+    assert "amount" in result["missing_fields"]
+    assert "多少" in result["response"]
+
+
+@pytest.mark.asyncio
+async def test_slot_fill_diet_no_meal_hint(clean_storage):
+    """No meal_time in entities or combined text → ask for meal_time."""
+    state = {"entities": {"cuisine_name": "沙拉"}, "pending_entities": {}}
+    result = await rec_diet.run(state)
+    assert "meal_time" in result["missing_fields"]
+    assert "餐" in result["response"]
+
+
+@pytest.mark.asyncio
+async def test_slot_fill_mood_vague_boundary():
+    """'还行' in MOOD_VAGUE → filtered → ask."""
+    state = {"entities": {"mood_label": "还行"}, "pending_entities": {}}
+    result = await rec_mood.run(state)
+    assert "mood_label" in result["missing_fields"]
+    assert "焦虑" in result["response"]
+
+
+@pytest.mark.asyncio
+async def test_slot_fill_set_plan_water_unreasonable():
+    """target_ml=99999 → unreasonable → ask again."""
+    state = {"entities": {"target_ml": 99999}, "pending_entities": {}}
+    result = await plan_water.run(state)
+    assert "target_ml" in result["missing_fields"]
+    assert "合理" in result["response"]
+
+
+@pytest.mark.asyncio
+async def test_slot_fill_set_plan_water_zero():
+    """target_ml=0 → invalid → ask."""
+    state = {"entities": {"target_ml": 0}, "pending_entities": {}}
+    result = await plan_water.run(state)
+    assert "target_ml" in result["missing_fields"]
+
+
+@pytest.mark.asyncio
+async def test_slot_fill_sport_default_calorie():
+    """Unrecognized sport → uses default calorie rate (6 kcal/min)."""
+    state = {"entities": {"sport_name": "攀岩", "duration_min": 60}, "pending_entities": {}}
+    result = await rec_sport.run(state)
+    assert result["missing_fields"] == []
+    assert "攀岩" in result["response"]
+    assert "360" in result["response"]  # 60 * 6

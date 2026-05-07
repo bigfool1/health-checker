@@ -6,6 +6,7 @@ class GraphState(TypedDict, total=False):
     context: str
     action: Optional[str]
     type: Optional[str]
+    confidence: Optional[float]
     entities: dict[str, Any]
     pending_entities: dict[str, Any]
     missing_fields: list[str]

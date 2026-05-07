@@ -40,7 +40,7 @@ def build_graph(llm: BaseChatModel) -> CompiledStateGraph:
     builder.add_node("extract_intent", _make_intent_node(llm))
 
     # action handler nodes
-    builder.add_node("handle_ask", _make_handler(handle_ask))
+    builder.add_node("handle_ask", _make_ask_node(llm))
     builder.add_node("handle_ambiguous", _make_handler(handle_ambiguous))
 
     # record type nodes (per-type slot-filling)
@@ -98,6 +98,12 @@ def build_graph(llm: BaseChatModel) -> CompiledStateGraph:
 def _make_intent_node(llm: BaseChatModel):
     async def node(state: GraphState) -> dict:
         return await extract_intent(state, llm)
+    return node
+
+
+def _make_ask_node(llm: BaseChatModel):
+    async def node(state: GraphState) -> dict:
+        return await handle_ask(state, llm)
     return node
 
 

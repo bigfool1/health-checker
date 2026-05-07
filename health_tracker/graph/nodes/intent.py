@@ -6,6 +6,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.language_models import BaseChatModel
 
 from health_tracker.graph.state import GraphState
+from health_tracker.config import CONFIDENCE_THRESHOLD
 
 SYSTEM_PROMPT = """你是一个健康助手的意图识别与参数提取器。
 
@@ -240,11 +241,31 @@ async def extract_intent(state: GraphState, llm: BaseChatModel) -> dict:
     content = _extract_text(response)
     result = _parse_json(content)
 
+    action = result.get("action", "ambiguous")
+    rtype = result.get("type", "none")
+    confidence = _safe_confidence(result.get("confidence"))
+
+    # downgrade low-confidence results to ambiguous
+    if confidence is not None and confidence < CONFIDENCE_THRESHOLD:
+        action = "ambiguous"
+        rtype = "none"
+
     return {
-        "action": result.get("action", "ambiguous"),
-        "type": result.get("type", "none"),
+        "action": action,
+        "type": rtype,
+        "confidence": confidence,
         "entities": result.get("entities", {}),
     }
+
+
+def _safe_confidence(val) -> float | None:
+    if val is None:
+        return None
+    try:
+        v = float(val)
+        return max(0.0, min(1.0, v))
+    except (ValueError, TypeError):
+        return None
 
 
 def _extract_text(response) -> str:
