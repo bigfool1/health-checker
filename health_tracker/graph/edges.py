@@ -1,7 +1,7 @@
 from health_tracker.graph.state import GraphState
 
-RECORD_TYPES = {"water", "diet", "sport", "mood", "med"}
-SET_PLAN_TYPES = {"water", "diet", "sport", "mood", "med"}
+RECORD_TYPES = {"water", "diet", "sport", "mood"}
+SET_PLAN_TYPES = {"water", "diet", "sport", "mood"}
 
 
 def route_by_action(state: GraphState) -> str:
@@ -28,7 +28,7 @@ def route_set_plan_type(state: GraphState) -> str:
 
 
 ALL_NODES = ["extract_intent"]
-ACTION_NODES = ["handle_ask", "handle_ambiguous", "handle_modify_delete"]
+ACTION_NODES = ["handle_ask", "handle_ambiguous"]
 RECORD_NODES = [f"record_{t}" for t in RECORD_TYPES]
 SET_PLAN_NODES = [f"set_plan_{t}" for t in SET_PLAN_TYPES]
 ROUTE_NODES = ["route_record_type", "route_set_plan_type"]

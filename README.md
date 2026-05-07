@@ -1,103 +1,112 @@
 # Health Tracker
 
-A health tracking assistant that migrates a [Dify](https://dify.ai) workflow to [LangGraph](https://github.com/langchain-ai/langgraph), demonstrating thoughtful LLM integration patterns.
+健康助手系统，基于 [LangGraph](https://github.com/langchain-ai/langgraph) + FastAPI，从 [Dify](https://dify.ai) workflow 迁移而来，演示 LLM 应用的架构设计。
 
-## What It Does
+## 功能
 
-Users log health data (water, diet, sport, mood, medication) via natural language. The system extracts intent and entities, routes through structured flows, and persists data — using an LLM only where it adds value.
-
-```
-"I drank two cups of coffee today"  →  extracts action=record, type=water,
-                                      entities={beverage: coffee, amount: 2 cups, time: today}
-                                      →  writes record → "Logged: coffee, 2 cups, today"
-
-"I set a goal of 2000ml water daily" →  action=set_plan, type=water, target_ml=2000
-                                      →  writes plan → "Goal set: 2000ml"
-```
-
-## Architecture
-
-| Layer | Stack | Role |
-|-------|-------|------|
-| API | FastAPI | HTTP endpoints, session management |
-| Orchestration | LangGraph StateGraph | Intent routing, slot-filling, flow control |
-| Understanding | LLM (single node) | Intent + type + entity extraction |
-| Storage | In-memory (mock) | Record / plan persistence |
+用户通过自然语言记录健康数据（喝水、饮食、运动、心情）和设置每日目标：
 
 ```
-User Input
-    │
-    ▼
+"刚才喝了两杯咖啡"  →  record / water  →  已记录喝水：咖啡，两杯，500ml
+"每天运动45分钟"    →  set_plan / sport →  已设置运动目标：45 分钟
+"这道菜多少热量"    →  ask / none       →  问答开发中
+"嗯"               →  ambiguous        →  澄清追问
+```
+
+## 架构
+
+| 层 | 技术 | 职责 |
+|---|------|------|
+| API | FastAPI | HTTP endpoint、会话管理 |
+| 编排 | LangGraph StateGraph | 意图路由、槽位填充、流程控制 |
+| 理解 | DeepSeek V4 Flash（单节点） | 意图 + type + entities 提取 |
+| 存储 | In-memory（demo） | 记录 / 计划持久化 |
+
+```
+用户输入
+  │
+  ▼
 ┌──────────────┐
-│ LLM Intent   │  ← only LLM call: extracts action, type, entities
-│ Extraction   │
+│ LLM 意图识别  │  ← 唯一 LLM 调用
+│ → JSON       │    router prompt ~200 行
 └──────┬───────┘
        │
-  ─────┼───── conditional edges (pure code routing)
+  ─────┼───── action 路由（纯代码）
        │
-  ┌────┼────┬──────┬───────────┐
-  ▼    ▼    ▼      ▼           ▼
- ask  rec  set  modify   ambiguous
-       plan  delete
-       │
-       ├── type routing → water/diet/sport/mood/med
-       ▼
-  Slot-Filling (pure code)
-       │
-       ├── missing → template follow-up
-       └── complete → write → confirmation
+  ┌────┼────┬──────┐
+  ▼    ▼    ▼      ▼
+ ask  rec  set  ambiguous
+           plan     │
+           │        ▼
+           │    澄清追问
+           │
+      ┌────┴──── type 路由（纯代码）
+      ▼
+  槽位填充（per-type 纯代码）
+   ← 单位换算、默认值、泛词过滤
+      │
+      ├── 缺字段 → 模板追问
+      └── 完整   → 写入 → 确认
 ```
 
-## Key Design Decisions
+**LLM 只做语义提取。** 路由、字段检查、追问生成全是确定性代码，低延迟、可测试、行为一致。
 
-**LLM only for semantic extraction.** A single LLM node converts unstructured natural language into structured JSON (action + type + entities). Everything downstream — routing, field checking, follow-up prompts — is deterministic code. This keeps latency low and behavior predictable where it matters.
+**模板追问，不用 LLM。** 追问句式有限可枚举，代码模板比 LLM 生成更快更稳定。
 
-**Template-based follow-ups, not LLM.** When a slot is missing, the system uses pre-defined question templates rather than generating questions with the LLM. The question space is finite and enumerable (~50 templates cover all type × field combinations). An LLM here would add latency and non-determinism without proportional UX gain.
-
-**LangGraph for workflow state management.** Conditional edges naturally map to the action/type routing logic. StateGraph makes each step traceable with checkpointing, and the graph structure mirrors the original Dify workflow for clear migration narrative.
-
-## Running
+## 运行
 
 ```bash
-# set your API key (DeepSeek Anthropic-compatible endpoint)
 export DEEPSEEK_API_KEY=your-key
 
-# install & run
 uv sync
 uv run python -m health_tracker.main
 
-# test
+# 测试
 curl -X POST http://localhost:8000/chat \
   -H 'Content-Type: application/json' \
-  -d '{"message": "I drank two cups of coffee this morning"}'
+  -d '{"message": "今天喝了三杯水"}'
+
+# 实时 LLM 意图测试
+uv run python scripts/test_intent.py
 ```
 
-## Tests
+## 测试
 
 ```bash
 uv run pytest tests/ -v
 ```
 
-39 tests covering templates, routing, slot-filling, JSON parsing, graph structure, and full graph flows with mocked LLM. No API key required.
+38 个测试，覆盖模板、路由、JSON 解析（含 `<think>` 标签）、per-type slot-fill、图结构、端到端 mock-LLM 流程。无需 API key。
 
-## Project Structure
+## 项目结构
 
 ```
 health_tracker/
-├── config.py             # env-based LLM config
-├── main.py               # FastAPI app + session store
+├── config.py              # LLM 配置（DeepSeek Anthropic 兼容端点）
+├── main.py                # FastAPI + 会话管理
 └── graph/
-    ├── state.py          # GraphState definition
-    ├── templates.py      # required fields + question prompts
-    ├── tools.py          # mock storage
-    ├── edges.py          # conditional edge routing
-    ├── builder.py        # StateGraph assembly
+    ├── state.py           # GraphState
+    ├── templates.py       # 必填字段 + 追问模板
+    ├── tools.py           # mock 存储
+    ├── edges.py           # action/type 条件边
+    ├── builder.py         # StateGraph 组装
     └── nodes/
-        ├── intent.py     # LLM intent extraction
-        ├── slot_fill.py  # slot-filling logic
-        └── handlers.py   # ask/ambiguous/modify_delete handlers
+        ├── _utils.py      # 共享工具
+        ├── intent.py      # LLM 意图识别
+        ├── handlers.py    # ask / ambiguous
+        ├── record/        # 4 个 per-type 记录节点
+        └── set_plan/      # 4 个 per-type 计划节点
+scripts/
+└── test_intent.py         # 实时 LLM 测试
+tests/
+└── test_graph.py          # 38 个单元/集成测试
+docs/
+└── DESIGN.md              # 架构设计文档
 ```
 
-## Notes
+## 设计原则
 
-This is a portfolio project demonstrating architecture decisions for LLM-powered applications. The original system runs on Django + Dify in production. This version re-implements the workflow in LangGraph with FastAPI, showing how to balance LLM and deterministic code in a real-world health tracking scenario.
+1. **LLM 只在必要时使用** — 单节点做语义提取，下游全是确定性代码
+2. **代码层做兜底** — 泛词过滤、默认值填充在 slot-fill 节点中二次校验
+3. **Per-type 职责分离** — 每种健康类型独立 slot-fill，各自维护单位换算和泛词列表
+4. **结构化输出关闭** — DS V4 Flash 的 structured_output 对嵌套 object 有兼容问题，改为 text 输出 + `_parse_json()` 解析（支持 `<think>` 标签、```json 围栏、纯 JSON）

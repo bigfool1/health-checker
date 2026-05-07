@@ -4,12 +4,33 @@ from langchain_core.language_models import BaseChatModel
 
 from health_tracker.graph.state import GraphState
 from health_tracker.graph.nodes.intent import extract_intent
-from health_tracker.graph.nodes.handlers import handle_ask, handle_ambiguous, handle_modify_delete
-from health_tracker.graph.nodes.slot_fill import slot_fill_record, slot_fill_set_plan
+from health_tracker.graph.nodes.handlers import handle_ask, handle_ambiguous
+from health_tracker.graph.nodes.record import water as rec_water
+from health_tracker.graph.nodes.record import diet as rec_diet
+from health_tracker.graph.nodes.record import sport as rec_sport
+from health_tracker.graph.nodes.record import mood as rec_mood
+from health_tracker.graph.nodes.set_plan import water as plan_water
+from health_tracker.graph.nodes.set_plan import diet as plan_diet
+from health_tracker.graph.nodes.set_plan import sport as plan_sport
+from health_tracker.graph.nodes.set_plan import mood as plan_mood
 from health_tracker.graph.edges import route_by_action, route_record_type, route_set_plan_type
 
-RECORD_TYPES = ["water", "diet", "sport", "mood", "med"]
-SET_PLAN_TYPES = ["water", "diet", "sport", "mood", "med"]
+RECORD_HANDLERS = {
+    "water": rec_water.run,
+    "diet": rec_diet.run,
+    "sport": rec_sport.run,
+    "mood": rec_mood.run,
+}
+
+SET_PLAN_HANDLERS = {
+    "water": plan_water.run,
+    "diet": plan_diet.run,
+    "sport": plan_sport.run,
+    "mood": plan_mood.run,
+}
+
+RECORD_TYPES = ["water", "diet", "sport", "mood"]
+SET_PLAN_TYPES = ["water", "diet", "sport", "mood"]
 
 
 def build_graph(llm: BaseChatModel) -> CompiledStateGraph:
@@ -21,15 +42,14 @@ def build_graph(llm: BaseChatModel) -> CompiledStateGraph:
     # action handler nodes
     builder.add_node("handle_ask", _make_handler(handle_ask))
     builder.add_node("handle_ambiguous", _make_handler(handle_ambiguous))
-    builder.add_node("handle_modify_delete", _make_handler(handle_modify_delete))
 
-    # record type nodes (slot-filling)
+    # record type nodes (per-type slot-filling)
     for rt in RECORD_TYPES:
-        builder.add_node(f"record_{rt}", _make_handler(slot_fill_record))
+        builder.add_node(f"record_{rt}", _make_handler(RECORD_HANDLERS[rt]))
 
-    # set_plan type nodes (slot-filling, pass action)
+    # set_plan type nodes (per-type slot-filling)
     for pt in SET_PLAN_TYPES:
-        builder.add_node(f"set_plan_{pt}", _make_handler(slot_fill_set_plan))
+        builder.add_node(f"set_plan_{pt}", _make_handler(SET_PLAN_HANDLERS[pt]))
 
     # set entry point
     builder.set_entry_point("extract_intent")
@@ -41,7 +61,6 @@ def build_graph(llm: BaseChatModel) -> CompiledStateGraph:
         {
             "handle_ask": "handle_ask",
             "handle_ambiguous": "handle_ambiguous",
-            "handle_modify_delete": "handle_modify_delete",
             "route_record_type": "route_record_type",
             "route_set_plan_type": "route_set_plan_type",
         },
@@ -72,7 +91,6 @@ def build_graph(llm: BaseChatModel) -> CompiledStateGraph:
         builder.add_edge(f"set_plan_{pt}", END)
     builder.add_edge("handle_ask", END)
     builder.add_edge("handle_ambiguous", END)
-    builder.add_edge("handle_modify_delete", END)
 
     return builder.compile()
 

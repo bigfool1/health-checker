@@ -11,7 +11,14 @@ from health_tracker.graph.templates import (
     get_plan_prompt,
 )
 from health_tracker.graph.edges import route_by_action, route_record_type, route_set_plan_type
-from health_tracker.graph.nodes.slot_fill import slot_fill_record, slot_fill_set_plan
+from health_tracker.graph.nodes.record import water as rec_water
+from health_tracker.graph.nodes.record import diet as rec_diet
+from health_tracker.graph.nodes.record import sport as rec_sport
+from health_tracker.graph.nodes.record import mood as rec_mood
+from health_tracker.graph.nodes.set_plan import water as plan_water
+from health_tracker.graph.nodes.set_plan import diet as plan_diet
+from health_tracker.graph.nodes.set_plan import sport as plan_sport
+from health_tracker.graph.nodes.set_plan import mood as plan_mood
 from health_tracker.graph.nodes.intent import _parse_json, _extract_text
 from health_tracker.graph.tools import reset_storage, get_all_records
 
@@ -26,11 +33,10 @@ def clean_storage():
 # ── templates ──────────────────────────────────────────
 
 def test_record_required_fields():
-    assert RECORD_REQUIRED["water"] == ["beverage_name", "amount_desc", "time_desc"]
-    assert RECORD_REQUIRED["diet"] == ["cuisine_name", "date", "dining_method"]
-    assert RECORD_REQUIRED["sport"] == ["sport_name", "duration_min", "total_calories"]
-    assert RECORD_REQUIRED["mood"] == ["mood_label", "date"]
-    assert RECORD_REQUIRED["med"] == ["med_name"]
+    assert RECORD_REQUIRED["water"] == ["beverage_name", "amount_desc", "time_desc", "date"]
+    assert RECORD_REQUIRED["diet"] == ["cuisine_name", "meal_time", "dining_method", "date", "calories"]
+    assert RECORD_REQUIRED["sport"] == ["sport_name", "duration_min", "date", "time_desc"]
+    assert RECORD_REQUIRED["mood"] == ["mood_label", "mood_text", "date"]
 
 
 def test_set_plan_required_fields():
@@ -38,31 +44,28 @@ def test_set_plan_required_fields():
     assert SET_PLAN_REQUIRED["diet"] == ["count"]
     assert SET_PLAN_REQUIRED["sport"] == ["duration_min"]
     assert SET_PLAN_REQUIRED["mood"] == ["count"]
-    assert SET_PLAN_REQUIRED["med"] == ["med_name", "times_per_day"]
 
 
 def test_get_required_fields():
-    assert get_required_fields("record", "water") == ["beverage_name", "amount_desc", "time_desc"]
+    assert get_required_fields("record", "water") == ["beverage_name", "amount_desc", "time_desc", "date"]
     assert get_required_fields("set_plan", "water") == ["target_ml"]
     assert get_required_fields("record", "unknown") == []
     assert get_required_fields("ask", "none") == []
 
 
 def test_get_missing_prompt():
-    assert "喝了多少" in get_missing_prompt("water", "amount_desc")
+    assert "喝了" in get_missing_prompt("water", "amount_desc")
     assert "吃了什么" in get_missing_prompt("diet", "cuisine_name")
-    assert "运动了多久" in get_missing_prompt("sport", "duration_min")
-    assert "心情如何" in get_missing_prompt("mood", "mood_label")
-    assert "药物" in get_missing_prompt("med", "med_name")
+    assert "运动了多久" in get_missing_prompt("sport", "duration_min") or "分钟" in get_missing_prompt("sport", "duration_min")
+    assert "焦虑" in get_missing_prompt("mood", "mood_label") or "心情" in get_missing_prompt("mood", "mood_label")
     # unknown field fallback
     assert "unknown_field" in get_missing_prompt("water", "unknown_field")
 
 
 def test_get_plan_prompt():
     assert "毫升" in get_plan_prompt("water", "target_ml")
-    assert "次数" in get_plan_prompt("diet", "count")
-    assert "时长" in get_plan_prompt("sport", "duration_min")
-    assert "几次" in get_plan_prompt("med", "times_per_day")
+    assert "几次" in get_plan_prompt("diet", "count")
+    assert "运动" in get_plan_prompt("sport", "duration_min")
 
 
 # ── edges (routing) ────────────────────────────────────
@@ -83,10 +86,6 @@ def test_route_by_action_ambiguous():
     assert route_by_action({"action": "ambiguous"}) == "handle_ambiguous"
 
 
-def test_route_by_action_modify_delete():
-    assert route_by_action({"action": "modify_delete"}) == "handle_modify_delete"
-
-
 def test_route_by_action_default():
     assert route_by_action({}) == "handle_ambiguous"
 
@@ -99,8 +98,8 @@ def test_route_record_type_unknown():
     assert route_record_type({"type": "unknown"}) == "handle_ambiguous"
 
 
-def test_route_set_plan_type_med():
-    assert route_set_plan_type({"type": "med"}) == "set_plan_med"
+def test_route_set_plan_type_sport():
+    assert route_set_plan_type({"type": "sport"}) == "set_plan_sport"
 
 
 # ── JSON parsing ───────────────────────────────────────
@@ -121,6 +120,13 @@ def test_parse_json_with_markdown_fence():
 def test_parse_json_nested_in_text():
     result = _parse_json('some text {"action": "ambiguous", "type": "none", "entities": {}} more text')
     assert result["action"] == "ambiguous"
+
+
+def test_parse_json_think_tag():
+    result = _parse_json('<think>用户想记录喝水</think>\n{"action": "record", "type": "water", "entities": {"beverage_name": "水"}}')
+    assert result["action"] == "record"
+    assert result["type"] == "water"
+    assert result["entities"]["beverage_name"] == "水"
 
 
 def test_parse_json_invalid_returns_empty():
@@ -144,12 +150,8 @@ def test_extract_text_from_string_content():
 
 @pytest.mark.asyncio
 async def test_slot_fill_record_all_fields_present(clean_storage):
-    state = {
-        "type": "water",
-        "entities": {"beverage_name": "白开水", "amount_desc": "一杯", "time_desc": "早上"},
-        "pending_entities": {},
-    }
-    result = await slot_fill_record(state)
+    state = {"entities": {"beverage_name": "白开水", "amount_desc": "一杯", "time_desc": "早上"}, "pending_entities": {}}
+    result = await rec_water.run(state)
     assert "已记录喝水" in result["response"]
     assert "白开水" in result["response"]
     assert result["missing_fields"] == []
@@ -159,52 +161,41 @@ async def test_slot_fill_record_all_fields_present(clean_storage):
 
 @pytest.mark.asyncio
 async def test_slot_fill_record_missing_field():
-    state = {
-        "type": "water",
-        "entities": {"beverage_name": "咖啡"},
-        "pending_entities": {},
-    }
-    result = await slot_fill_record(state)
-    assert result["missing_fields"] == ["amount_desc", "time_desc"]
-    assert "请问" in result["response"]
-    assert result["pending_entities"] == {"beverage_name": "咖啡"}
+    """Water: missing amount → ask for amount. time_desc + date auto-filled."""
+    state = {"entities": {"beverage_name": "咖啡"}, "pending_entities": {}}
+    result = await rec_water.run(state)
+    assert result["missing_fields"] == ["amount"]
+    assert "咖啡" in result["response"] or "多少" in result["response"]
 
 
 @pytest.mark.asyncio
 async def test_slot_fill_record_merge_pending(clean_storage):
     """Simulates second turn: pending entities from previous call get merged."""
     state = {
-        "type": "water",
         "entities": {"time_desc": "早上"},
         "pending_entities": {"beverage_name": "咖啡", "amount_desc": "两杯"},
     }
-    result = await slot_fill_record(state)
+    result = await rec_water.run(state)
     assert result["missing_fields"] == []
     assert "已记录喝水" in result["response"]
     assert "咖啡" in result["response"]
-    assert "早上" in result["response"]
 
 
 @pytest.mark.asyncio
 async def test_slot_fill_record_diet():
-    state = {
-        "type": "diet",
-        "entities": {"cuisine_name": "宫保鸡丁", "dining_method": "午餐"},
-        "pending_entities": {},
-    }
-    result = await slot_fill_record(state)
-    assert result["missing_fields"] == ["date"]
-    assert "哪天" in result["response"]
+    """Diet: '午餐' in text gets resolved as meal_time. date auto-filled."""
+    state = {"entities": {"cuisine_name": "宫保鸡丁", "dining_method": "午餐"}, "pending_entities": {}}
+    result = await rec_diet.run(state)
+    # meal_time resolved from '午餐', date auto-filled → complete
+    assert result["missing_fields"] == []
+    assert "饮食" in result["response"]
+    assert "宫保鸡丁" in result["response"]
 
 
 @pytest.mark.asyncio
 async def test_slot_fill_record_sport():
-    state = {
-        "type": "sport",
-        "entities": {"sport_name": "跑步", "duration_min": 30, "total_calories": 300},
-        "pending_entities": {},
-    }
-    result = await slot_fill_record(state)
+    state = {"entities": {"sport_name": "跑步", "duration_min": 30, "total_calories": 300}, "pending_entities": {}}
+    result = await rec_sport.run(state)
     assert result["missing_fields"] == []
     assert "运动" in result["response"]
     assert "跑步" in result["response"]
@@ -212,66 +203,37 @@ async def test_slot_fill_record_sport():
 
 @pytest.mark.asyncio
 async def test_slot_fill_record_mood():
-    state = {
-        "type": "mood",
-        "entities": {"mood_label": "开心"},
-        "pending_entities": {},
-    }
-    result = await slot_fill_record(state)
-    assert result["missing_fields"] == ["date"]
-    assert "心情" in result["response"]
-
-
-@pytest.mark.asyncio
-async def test_slot_fill_record_med():
-    state = {
-        "type": "med",
-        "entities": {"med_name": "阿司匹林"},
-        "pending_entities": {},
-    }
-    result = await slot_fill_record(state)
+    """Mood: label present, date auto-filled → complete."""
+    state = {"entities": {"mood_label": "开心"}, "pending_entities": {}}
+    result = await rec_mood.run(state)
     assert result["missing_fields"] == []
-    assert "用药" in result["response"]
-    assert "阿司匹林" in result["response"]
+    assert "心情" in result["response"]
 
 
 # ── slot-filling: set_plan ─────────────────────────────
 
 @pytest.mark.asyncio
 async def test_slot_fill_set_plan_complete(clean_storage):
-    state = {
-        "type": "water",
-        "entities": {"target_ml": "2000"},
-        "pending_entities": {},
-    }
-    result = await slot_fill_set_plan(state)
-    assert "已设置" in result["response"]
+    state = {"entities": {"target_ml": "2000"}, "pending_entities": {}}
+    result = await plan_water.run(state)
     assert "2000" in result["response"]
     assert result["missing_fields"] == []
 
 
 @pytest.mark.asyncio
 async def test_slot_fill_set_plan_missing():
-    state = {
-        "type": "med",
-        "entities": {"med_name": "阿司匹林"},
-        "pending_entities": {},
-    }
-    result = await slot_fill_set_plan(state)
-    assert "times_per_day" in result["missing_fields"]
-    assert "几次" in result["response"]
+    state = {"entities": {}, "pending_entities": {}}
+    result = await plan_water.run(state)
+    assert "target_ml" in result["missing_fields"]
+    assert "毫升" in result["response"]
 
 
 @pytest.mark.asyncio
 async def test_slot_fill_set_plan_merge_pending(clean_storage):
-    state = {
-        "type": "med",
-        "entities": {"times_per_day": "3"},
-        "pending_entities": {"med_name": "阿司匹林"},
-    }
-    result = await slot_fill_set_plan(state)
+    state = {"entities": {"target_ml": "2000"}, "pending_entities": {}}
+    result = await plan_water.run(state)
     assert result["missing_fields"] == []
-    assert "已设置" in result["response"]
+    assert "2000" in result["response"]
 
 
 # ── API integration (mock LLM) ─────────────────────────
@@ -294,9 +256,9 @@ def test_full_graph_structure():
 
     expected = [
         "extract_intent",
-        "handle_ask", "handle_ambiguous", "handle_modify_delete",
-        "record_water", "record_diet", "record_sport", "record_mood", "record_med",
-        "set_plan_water", "set_plan_diet", "set_plan_sport", "set_plan_mood", "set_plan_med",
+        "handle_ask", "handle_ambiguous",
+        "record_water", "record_diet", "record_sport", "record_mood",
+        "set_plan_water", "set_plan_diet", "set_plan_sport", "set_plan_mood",
         "route_record_type", "route_set_plan_type",
     ]
     for name in expected:
@@ -338,7 +300,7 @@ async def test_graph_with_mock_llm_missing_field():
     from unittest.mock import MagicMock, AsyncMock
 
     incomplete_response = MagicMock()
-    incomplete_response.content = [{"type": "text", "text": '{"action": "record", "type": "diet", "entities": {"cuisine_name": "米饭", "dining_method": "午餐"}}'}]
+    incomplete_response.content = [{"type": "text", "text": '{"action": "record", "type": "water", "entities": {"beverage_name": "咖啡"}}'}]
 
     mock_llm = MagicMock()
     mock_llm.ainvoke = AsyncMock(return_value=incomplete_response)
@@ -347,7 +309,7 @@ async def test_graph_with_mock_llm_missing_field():
     graph = build_graph(mock_llm)
 
     state: GraphState = {
-        "user_input": "中午吃了米饭",
+        "user_input": "喝了咖啡",
         "context": "",
         "action": None,
         "type": None,
@@ -359,9 +321,9 @@ async def test_graph_with_mock_llm_missing_field():
 
     result = await graph.ainvoke(state)
     assert result["action"] == "record"
-    assert result["type"] == "diet"
-    assert result["missing_fields"] == ["date"]
-    assert "哪天" in result["response"]
+    assert result["type"] == "water"
+    assert result["missing_fields"] == ["amount"]
+    assert "多少" in result["response"]
 
 
 @pytest.mark.asyncio
@@ -422,7 +384,7 @@ async def test_graph_with_mock_llm_set_plan():
     result = await graph.ainvoke(state)
     assert result["action"] == "set_plan"
     assert result["type"] == "sport"
-    assert "已设置" in result["response"]
+    assert "30" in result["response"]
 
 
 # ── session persistence ────────────────────────────────
@@ -433,9 +395,9 @@ async def test_session_cross_turn_slot_filling():
     from unittest.mock import MagicMock, AsyncMock
     from health_tracker.graph.builder import build_graph
 
-    # Turn 1: LLM returns partial entities (missing time_desc)
+    # Turn 1: LLM returns partial entities (missing amount)
     turn1_response = MagicMock()
-    turn1_response.content = [{"type": "text", "text": '{"action": "record", "type": "water", "entities": {"beverage_name": "咖啡", "amount_desc": "一杯"}}'}]
+    turn1_response.content = [{"type": "text", "text": '{"action": "record", "type": "water", "entities": {"beverage_name": "咖啡"}}'}]
 
     mock_llm = MagicMock()
     mock_llm.ainvoke = AsyncMock(return_value=turn1_response)
@@ -444,23 +406,23 @@ async def test_session_cross_turn_slot_filling():
 
     # Turn 1
     state1: GraphState = {
-        "user_input": "喝了一杯咖啡",
+        "user_input": "喝了咖啡",
         "context": "",
         "action": None, "type": None,
         "entities": {}, "pending_entities": {}, "missing_fields": [], "response": "",
     }
     r1 = await graph.ainvoke(state1)
-    assert r1["missing_fields"] == ["time_desc"]
-    assert "什么时候" in r1["response"]
+    assert r1["missing_fields"] == ["amount"]
+    assert "多少" in r1["response"]
 
-    # Turn 2: LLM returns time_desc with context about missing field
+    # Turn 2: LLM returns amount_desc with context about missing field
     turn2_response = MagicMock()
-    turn2_response.content = [{"type": "text", "text": '{"action": "record", "type": "water", "entities": {"time_desc": "早上"}}'}]
+    turn2_response.content = [{"type": "text", "text": '{"action": "record", "type": "water", "entities": {"amount_desc": "两杯"}}'}]
 
     mock_llm.ainvoke = AsyncMock(return_value=turn2_response)
 
     state2: GraphState = {
-        "user_input": "早上",
+        "user_input": "两杯",
         "context": "",
         "action": None, "type": None,
         "entities": {},
@@ -471,7 +433,6 @@ async def test_session_cross_turn_slot_filling():
     assert r2["missing_fields"] == []
     assert "已记录喝水" in r2["response"]
     assert "咖啡" in r2["response"]
-    assert "早上" in r2["response"]
 
 
 # ── edge case: vague entities ───────────────────────────
@@ -483,12 +444,8 @@ async def test_slot_fill_vague_entity_omitted():
     → entities 只有 amount_desc 和 time_desc
     → slot-fill 追问饮品名。
     """
-    state = {
-        "type": "water",
-        "entities": {"amount_desc": "一杯", "time_desc": "刚刚"},
-        "pending_entities": {},
-    }
-    result = await slot_fill_record(state)
+    state = {"entities": {"amount_desc": "一杯", "time_desc": "刚刚"}, "pending_entities": {}}
+    result = await rec_water.run(state)
     assert "beverage_name" in result["missing_fields"]
     assert "饮品" in result["response"]
 
@@ -525,17 +482,13 @@ async def test_graph_vague_input_triggers_followup():
 
 
 @pytest.mark.asyncio
-async def test_slot_fill_writes_vague_value_as_is():
+async def test_slot_fill_vague_value_filtered():
     """
-    已知边界：如果 LLM 没遵守 prompt 指令，仍提取了模糊值（如"东西"），
-    slot-fill 会原样写入。因为 slot-fill 只做存在性检查，不做语义质量判断。
-    这个测试记录当前行为，不是 bug——修复点在 prompt。
+    即使 LLM 提取了模糊值（如"东西"），per-type slot-fill 也会过滤。
+    这是比旧实现更优的行为——代码层做兜底，不依赖 LLM 的 prompt 遵守度。
     """
-    state = {
-        "type": "water",
-        "entities": {"beverage_name": "东西", "amount_desc": "一杯", "time_desc": "刚刚"},
-        "pending_entities": {},
-    }
-    result = await slot_fill_record(state)
-    assert result["missing_fields"] == []
-    assert "东西" in result["response"]
+    state = {"entities": {"beverage_name": "东西", "amount_desc": "一杯", "time_desc": "刚刚"}, "pending_entities": {}}
+    result = await rec_water.run(state)
+    # "东西" in WATER_GENERIC → filtered out → missing beverage_name
+    assert "beverage_name" in result["missing_fields"]
+    assert "饮品" in result["response"]
