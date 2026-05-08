@@ -1,5 +1,5 @@
-from health_tracker.graph.state import GraphState
 from health_tracker.graph.nodes._utils import safe_int
+from health_tracker.graph.state import GraphState
 from health_tracker.graph.tools import save_plan
 
 
@@ -24,7 +24,7 @@ async def run(state: GraphState) -> dict:
             "response": "这个数值似乎不太合理，请确认一下每天的实际饮水目标（毫升）？",
         }
 
-    plan = await save_plan("water", slot_values)
+    await save_plan("water", slot_values)
     return {
         "missing_fields": [],
         "pending_entities": {},

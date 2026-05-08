@@ -104,7 +104,7 @@ PLAN_LABELS = {
 def format_record_confirm(record_type: str, entities: dict, record_id: int) -> str:
     label = TYPE_LABELS.get(record_type, record_type)
     detail_parts = []
-    for k, v in entities.items():
+    for _k, v in entities.items():
         if v is not None:
             detail_parts.append(str(v))
     detail = "，".join(detail_parts)
@@ -114,7 +114,7 @@ def format_record_confirm(record_type: str, entities: dict, record_id: int) -> s
 def format_plan_confirm(plan_type: str, entities: dict, plan_id: int) -> str:
     label = PLAN_LABELS.get(plan_type, plan_type)
     detail_parts = []
-    for k, v in entities.items():
+    for _k, v in entities.items():
         if v is not None:
             detail_parts.append(str(v))
     detail = "，".join(detail_parts)

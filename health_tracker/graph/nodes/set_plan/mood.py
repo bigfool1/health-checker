@@ -1,5 +1,5 @@
-from health_tracker.graph.state import GraphState
 from health_tracker.graph.nodes._utils import safe_int
+from health_tracker.graph.state import GraphState
 from health_tracker.graph.tools import save_plan
 
 
@@ -18,7 +18,7 @@ async def run(state: GraphState) -> dict:
             "response": "你希望每天记录几次心情？例如 3 次。",
         }
 
-    plan = await save_plan("mood", slot_values)
+    await save_plan("mood", slot_values)
     return {
         "missing_fields": [],
         "pending_entities": {},

@@ -1,5 +1,5 @@
+from health_tracker.graph.nodes._utils import format_record_confirm, safe_int, today
 from health_tracker.graph.state import GraphState
-from health_tracker.graph.nodes._utils import today, safe_int, format_record_confirm
 from health_tracker.graph.tools import save_record
 
 MEAL_MAP = {

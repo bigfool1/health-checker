@@ -2,11 +2,11 @@ import json
 import re
 from datetime import datetime
 
-from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import HumanMessage, SystemMessage
 
-from health_tracker.graph.state import GraphState
 from health_tracker.config import CONFIDENCE_THRESHOLD
+from health_tracker.graph.state import GraphState
 
 SYSTEM_PROMPT = """你是一个健康助手的意图识别与参数提取器。
 

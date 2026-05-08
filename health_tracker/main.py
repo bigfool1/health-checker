@@ -1,9 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 from langchain_anthropic import ChatAnthropic
+from pydantic import BaseModel
 
-from health_tracker.config import LLM_MODEL, LLM_API_KEY, LLM_BASE_URL
+from health_tracker.config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
 from health_tracker.graph.builder import build_graph
 from health_tracker.graph.state import GraphState
 

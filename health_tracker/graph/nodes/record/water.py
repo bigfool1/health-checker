@@ -1,7 +1,10 @@
-from health_tracker.graph.state import GraphState
 from health_tracker.graph.nodes._utils import (
-    today, current_hhmm, parse_amount_ml, format_record_confirm,
+    current_hhmm,
+    format_record_confirm,
+    parse_amount_ml,
+    today,
 )
+from health_tracker.graph.state import GraphState
 from health_tracker.graph.tools import save_record
 
 WATER_GENERIC = {"东西", "饮料", "喝了点", "啥的", "喝的", "不清楚", "不知道", "随便", "忘了"}

@@ -1,28 +1,24 @@
-import json
-import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
+import pytest
+
+from health_tracker.graph.edges import route_by_action, route_record_type, route_set_plan_type
+from health_tracker.graph.nodes._utils import parse_amount_ml, parse_duration
+from health_tracker.graph.nodes.intent import _extract_text, _parse_json, _safe_confidence
+from health_tracker.graph.nodes.record import diet as rec_diet
+from health_tracker.graph.nodes.record import mood as rec_mood
+from health_tracker.graph.nodes.record import sport as rec_sport
+from health_tracker.graph.nodes.record import water as rec_water
+from health_tracker.graph.nodes.set_plan import water as plan_water
 from health_tracker.graph.state import GraphState
 from health_tracker.graph.templates import (
     RECORD_REQUIRED,
     SET_PLAN_REQUIRED,
-    get_required_fields,
     get_missing_prompt,
     get_plan_prompt,
+    get_required_fields,
 )
-from health_tracker.graph.edges import route_by_action, route_record_type, route_set_plan_type
-from health_tracker.graph.nodes.record import water as rec_water
-from health_tracker.graph.nodes.record import diet as rec_diet
-from health_tracker.graph.nodes.record import sport as rec_sport
-from health_tracker.graph.nodes.record import mood as rec_mood
-from health_tracker.graph.nodes.set_plan import water as plan_water
-from health_tracker.graph.nodes.set_plan import diet as plan_diet
-from health_tracker.graph.nodes.set_plan import sport as plan_sport
-from health_tracker.graph.nodes.set_plan import mood as plan_mood
-from health_tracker.graph.nodes.intent import _parse_json, _extract_text, _safe_confidence
-from health_tracker.graph.nodes._utils import parse_amount_ml, parse_duration
-from health_tracker.graph.tools import reset_storage, get_all_records
-
+from health_tracker.graph.tools import get_all_records, reset_storage
 
 # ── fixtures ──────────────────────────────────────────
 
@@ -271,6 +267,7 @@ def mock_llm_response():
 
 def test_full_graph_structure():
     from langchain_anthropic import ChatAnthropic
+
     from health_tracker.graph.builder import build_graph
 
     llm = ChatAnthropic(model="test", api_key="sk-test", base_url="https://test.local")
@@ -291,7 +288,8 @@ def test_full_graph_structure():
 @pytest.mark.asyncio
 async def test_graph_full_record_flow(mock_llm_response):
     """Full graph with mock LLM returning complete entities."""
-    from unittest.mock import MagicMock, AsyncMock
+    from unittest.mock import MagicMock
+
     from health_tracker.graph.builder import build_graph
 
     mock_llm = MagicMock()
@@ -320,7 +318,7 @@ async def test_graph_full_record_flow(mock_llm_response):
 @pytest.mark.asyncio
 async def test_graph_with_mock_llm_missing_field():
     """Test graph with LLM returning incomplete entities."""
-    from unittest.mock import MagicMock, AsyncMock
+    from unittest.mock import MagicMock
 
     incomplete_response = MagicMock()
     incomplete_response.content = [{"type": "text", "text": '{"action": "record", "type": "water", "entities": {"beverage_name": "咖啡"}}'}]
@@ -352,7 +350,7 @@ async def test_graph_with_mock_llm_missing_field():
 @pytest.mark.asyncio
 async def test_graph_with_mock_llm_ambiguous():
     """Test graph with LLM returning ambiguous action."""
-    from unittest.mock import MagicMock, AsyncMock
+    from unittest.mock import MagicMock
 
     ambig_response = MagicMock()
     ambig_response.content = [{"type": "text", "text": '{"action": "ambiguous", "type": "none", "entities": {}}'}]
@@ -382,7 +380,7 @@ async def test_graph_with_mock_llm_ambiguous():
 @pytest.mark.asyncio
 async def test_graph_with_mock_llm_set_plan():
     """Test graph with LLM returning set_plan action."""
-    from unittest.mock import MagicMock, AsyncMock
+    from unittest.mock import MagicMock
 
     plan_response = MagicMock()
     plan_response.content = [{"type": "text", "text": '{"action": "set_plan", "type": "sport", "entities": {"duration_min": 30}}'}]
@@ -415,7 +413,8 @@ async def test_graph_with_mock_llm_set_plan():
 @pytest.mark.asyncio
 async def test_graph_low_confidence_downgraded():
     """LLM returns low confidence → action forced to ambiguous."""
-    from unittest.mock import MagicMock, AsyncMock
+    from unittest.mock import MagicMock
+
     from health_tracker.graph.builder import build_graph
 
     low_conf = MagicMock()
@@ -435,7 +434,8 @@ async def test_graph_low_confidence_downgraded():
 @pytest.mark.asyncio
 async def test_graph_high_confidence_unchanged():
     """LLM returns high confidence → action passes through unchanged."""
-    from unittest.mock import MagicMock, AsyncMock
+    from unittest.mock import MagicMock
+
     from health_tracker.graph.builder import build_graph
 
     high_conf = MagicMock()
@@ -455,7 +455,8 @@ async def test_graph_high_confidence_unchanged():
 @pytest.mark.asyncio
 async def test_graph_no_confidence_not_downgraded():
     """LLM returns no confidence field → backward compatible, not downgraded."""
-    from unittest.mock import MagicMock, AsyncMock
+    from unittest.mock import MagicMock
+
     from health_tracker.graph.builder import build_graph
 
     no_conf = MagicMock()
@@ -477,7 +478,8 @@ async def test_graph_no_confidence_not_downgraded():
 @pytest.mark.asyncio
 async def test_session_cross_turn_slot_filling():
     """Simulate two-turn interaction via direct graph invocation."""
-    from unittest.mock import MagicMock, AsyncMock
+    from unittest.mock import MagicMock
+
     from health_tracker.graph.builder import build_graph
 
     # Turn 1: LLM returns partial entities (missing amount)
@@ -540,7 +542,8 @@ async def test_graph_vague_input_triggers_followup():
     """
     端到端：mock LLM 正确省略模糊值，验证 graph 返回追问。
     """
-    from unittest.mock import MagicMock, AsyncMock
+    from unittest.mock import MagicMock
+
     from health_tracker.graph.builder import build_graph
 
     # LLM 正确地将"东西"省略，只提取了 amount_desc 和 time_desc

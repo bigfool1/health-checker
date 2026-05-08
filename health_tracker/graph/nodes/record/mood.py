@@ -1,5 +1,5 @@
+from health_tracker.graph.nodes._utils import format_record_confirm, today
 from health_tracker.graph.state import GraphState
-from health_tracker.graph.nodes._utils import today, format_record_confirm
 from health_tracker.graph.tools import save_record
 
 MOOD_VAGUE = {

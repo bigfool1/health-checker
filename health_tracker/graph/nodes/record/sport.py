@@ -1,7 +1,11 @@
-from health_tracker.graph.state import GraphState
 from health_tracker.graph.nodes._utils import (
-    today, current_hhmm, parse_duration, safe_float, format_record_confirm,
+    current_hhmm,
+    format_record_confirm,
+    parse_duration,
+    safe_float,
+    today,
 )
+from health_tracker.graph.state import GraphState
 from health_tracker.graph.tools import save_record
 
 CALORIE_RATE = {

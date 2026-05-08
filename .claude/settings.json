@@ -1,0 +1,9 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "command": ".venv/bin/ruff check health_tracker/ tests/"
+      }
+    ]
+  }
+}

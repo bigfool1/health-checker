@@ -1,5 +1,5 @@
-from health_tracker.graph.state import GraphState
 from health_tracker.graph.nodes._utils import parse_duration
+from health_tracker.graph.state import GraphState
 from health_tracker.graph.tools import save_plan
 
 
@@ -21,7 +21,7 @@ async def run(state: GraphState) -> dict:
             "response": "你希望每天运动多久？例如 30 分钟或 1 小时。",
         }
 
-    plan = await save_plan("sport", slot_values)
+    await save_plan("sport", slot_values)
     return {
         "missing_fields": [],
         "pending_entities": {},
