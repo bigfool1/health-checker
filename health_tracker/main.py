@@ -3,18 +3,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from langchain_anthropic import ChatAnthropic
 from pydantic import BaseModel
 
-from health_tracker.config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+from health_tracker.config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, LLM_THINKING
 from health_tracker.graph.builder import build_graph
 from health_tracker.graph.state import GraphState
 
 app = FastAPI(title="Health Tracker", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
+_thinking = {"type": "enabled", "budget_tokens": 512} if LLM_THINKING == "enabled" else {"type": "disabled"}
+
 llm = ChatAnthropic(
     model=LLM_MODEL,
     api_key=LLM_API_KEY,
     base_url=LLM_BASE_URL,
     temperature=0,
+    thinking=_thinking,
 )
 
 graph = build_graph(llm)

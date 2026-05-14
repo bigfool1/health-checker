@@ -1,62 +1,64 @@
 # Health Assistant — Design Document
 
+> [中文版 (Chinese)](./DESIGN.zh.md)
+
 ## Overview
 
-健康助手系统，将原 Dify Workflow 实现迁移为 **FastAPI + LangGraph** 架构。
+A health assistant system migrated from a Dify Workflow implementation to a **FastAPI + LangGraph** architecture.
 
 ## Tech Stack
 
-| 层 | 技术 | 职责 |
+| Layer | Tech | Role |
 |---|---|---|
-| API 层 | FastAPI | HTTP endpoint、会话管理 |
-| 编排层 | LangGraph StateGraph | 意图路由、槽位填充、流程控制 |
-| 理解层 | LLM（单节点） | 意图识别 + 类型分类 + 实体提取 |
-| 工具层 | Mock storage | 记录/计划持久化（demo） |
+| API | FastAPI | HTTP endpoint, session management |
+| Orchestration | LangGraph StateGraph | Intent routing, slot-filling, flow control |
+| Understanding | LLM (single node) | Intent classification + type + entity extraction |
+| Tools | Mock storage | Record/plan persistence (demo) |
 
 ## Architecture
 
 ```
-用户输入
+User Input
   │
   ▼
 ┌─────────────────┐
-│  LLM 意图识别    │  ← 唯一调用 LLM 的地方
-│  → action       │    提取 action + type + confidence + entities
-│  → type         │    router prompt ~200 行，含优先级规则、模糊词、示例
-│  → entities     │
+│  LLM Intent     │  ← The only LLM call
+│  → action       │    Extracts action + type + confidence + entities
+│  → type         │    Router prompt ~200 lines with priority rules,
+│  → entities     │    vague words, and examples
 └────────┬────────┘
          │
-    ─────┼───── 条件边（纯代码路由，按 action）
+    ─────┼───── Conditional edges (pure code routing by action)
          │
    ┌─────┼─────┬──────┐
    ▼     ▼     ▼      ▼
   ask  record set  ambiguous
              plan      │
               │        ▼
-              │    澄清追问用户
+              │    Prompt user for clarification
               │
-         ┌────┴──── 条件边（纯代码路由，按 type）
+         ┌────┴──── Conditional edges (pure code routing by type)
          ▼
-       槽位填充节点（per-type 纯代码）
-         │  water/diet/sport/mood 各一个
-         │  ← 单位换算、默认值填充、泛词过滤、数值校验
+       Per-type slot-fill nodes (pure code)
+         │  One each for water/diet/sport/mood
+         │  ← Unit conversion, defaults, vague-word filtering, validation
          │
-         ├── 缺失字段 → 模板追问
+         ├── Missing fields → template-based prompt
          │
-         └── 完整 → 写入存储 → 模板确认回复
+         └── Complete → write to storage → template-based confirmation
 ```
 
-## Action / Type 体系
+## Action / Type System
 
-| action | 含义 | 路由目标 |
-|--------|------|---------|
-| record | 用户描述已发生的健康行为 | type 分支 → slot-fill |
-| set_plan | 用户设置每日目标 | type 分支 → slot-fill |
-| ask | 用户咨询健康问题 | handle_ask |
-| ambiguous | 无法判断意图 | handle_ambiguous |
+| action | Meaning | Route target |
+|--------|---------|-------------|
+| record | User describes a completed health action | type branch → slot-fill |
+| set_plan | User sets a daily goal | type branch → slot-fill |
+| ask | User asks a health question | handle_ask |
+| ambiguous | Intent cannot be determined | handle_ambiguous |
 
-| type | record 必需字段 | set_plan 目标参数 |
-|------|----------------|-------------------|
+| type | record required fields | set_plan target params |
+|------|----------------------|------------------------|
 | water | beverage_name, amount_ml | target_ml |
 | diet | cuisine_name, meal_time | count |
 | sport | sport_name, duration_min | duration_min |
@@ -64,75 +66,75 @@
 
 ## Key Design Decisions
 
-### 为什么 LLM 只用于意图识别
+### Why LLM is only used for intent extraction
 
-LLM 的价值在非结构化自然语言 → 结构化 JSON。下游的路由、字段检查、追问生成全部是有限状态空间内的确定性操作，用代码实现更可靠、可测试、低延迟。
+The LLM's value is unstructured natural language → structured JSON. Downstream routing, field validation, and prompt generation are all deterministic operations within a finite state space. Implementing them in code is more reliable, testable, and low-latency.
 
-### 为什么槽位填充追问不用 LLM
+### Why slot-fill follow-ups don't use LLM
 
-追问句式有限可枚举（type × missing_fields 的组合只有几十条模板）。用 LLM 生成引入不确定性和延迟，换不回对等的体验提升。
+The set of follow-up prompts is finite and enumerable (type × missing_fields = only dozens of template combinations). Using LLM generation introduces uncertainty and latency without delivering proportional UX improvement.
 
-### 为什么每个 type 有独立的 slot-fill 节点
+### Why each type has its own slot-fill node
 
-不同 type 的字段含义、单位转换、默认值、泛词列表完全不同——沉淀在 per-type 节点中，避免一个臃肿的通配函数。
+Different types have entirely different field semantics, unit conversions, defaults, and vague-word lists. Isolating these in per-type nodes avoids a bloated catch-all function.
 
-### 为什么用 LangGraph
+### Why LangGraph
 
-- 条件边（conditional_edges）天然映射 action/type 的分支路由
-- StateGraph 的状态传递保证每一步可追溯
-- 图结构与 Dify 工作流有直观对应关系，迁移叙事清晰
+- Conditional edges naturally map to action/type branch routing
+- StateGraph's state passing ensures every step is traceable
+- The graph structure maps intuitively to the original Dify workflow, making the migration narrative clear
 
 ## Improvement Points vs Original Dify Workflow
 
-1. **泛词过滤下沉到代码层** — prompt 指导 LLM 省去不必要的泛词，但即使 LLM 提取了模糊值（如"东西""不知道"），per-type 节点也会在代码层过滤，不依赖 LLM 的 prompt 遵守度
-2. **默认值智能填充** — date（今天）、time_desc（当前时间）自动补充，减少追问
-3. **type 强制互斥** — "跑完步喝了蛋白粉"同时涉及 sport 和 diet，当前只能二选一。对 demo 保持互斥是合理简化
-4. **计划设置合理性校验** — target_ml > 50000 拦截等
+1. **Vague-word filtering pushed to code layer** — the prompt guides the LLM to omit unnecessary vague words, but even if the LLM extracts fuzzy values (e.g., "stuff", "whatever"), per-type nodes filter them at the code level, without relying on LLM prompt compliance
+2. **Smart default filling** — date (today), time_desc (current time) are auto-filled to reduce follow-up prompts
+3. **Enforced type mutual exclusion** — "drank a protein shake after running" involves both sport and diet, but only one can be selected. Keeping them mutually exclusive is a reasonable simplification for a demo
+4. **Plan sanity checks** — e.g., target_ml > 50000 is rejected
 
 ## Module Structure
 
 ```
 health_tracker/
-├── config.py                  # 环境变量 LLM 配置
-├── main.py                    # FastAPI + 会话管理
+├── config.py                  # Env-based LLM config
+├── main.py                    # FastAPI + session management
 └── graph/
     ├── state.py               # GraphState TypedDict
-    ├── templates.py           # 必填字段 schema + 追问模板
-    ├── tools.py               # mock 存储
-    ├── edges.py               # action/type 条件边路由
-    ├── builder.py             # StateGraph 组装
+    ├── templates.py           # Required field schema + follow-up templates
+    ├── tools.py               # Mock storage
+    ├── edges.py               # Action/type conditional edge routing
+    ├── builder.py             # StateGraph assembly
     └── nodes/
-        ├── _utils.py          # 共享工具（日期、换算、格式化）
-        ├── intent.py          # LLM 意图识别（prompt ~200 行）
-        ├── handlers.py        # ask / ambiguous handler
+        ├── _utils.py          # Shared utilities (date, conversion, formatting)
+        ├── intent.py          # LLM intent extraction (prompt ~200 lines)
+        ├── handlers.py        # ask / ambiguous handlers
         ├── record/
-        │   ├── water.py       # 单位换算（杯→ml）、泛词过滤
-        │   ├── diet.py        # 餐次/就餐方式推断
-        │   ├── sport.py       # 时长解析、卡路里估算
-        │   └── mood.py        # 模糊情绪过滤
+        │   ├── water.py       # Unit conversion (cup→ml), vague-word filtering
+        │   ├── diet.py        # Meal time / dining style inference
+        │   ├── sport.py       # Duration parsing, calorie estimation
+        │   └── mood.py        # Vague mood filtering
         └── set_plan/
-            ├── water.py       # 合理性校验（上限拦截）
-            ├── diet.py        # count 校验
-            ├── sport.py       # duration 解析
-            └── mood.py        # count 校验
+            ├── water.py       # Sanity check (upper limit rejection)
+            ├── diet.py        # count validation
+            ├── sport.py       # Duration parsing
+            └── mood.py        # count validation
 
-prompts/                       # prompt 版本管理
-│   (router prompt 当前版本维护在 intent.py 的 SYSTEM_PROMPT 中)
+prompts/                       # Prompt versioning
+│   (current router prompt maintained in intent.py SYSTEM_PROMPT)
 scripts/
-└── test_intent.py             # 实时 LLM 意图识别测试
+└── test_intent.py             # Live LLM intent extraction test
 
 tests/
-└── test_graph.py              # 38 个单元/集成测试
+└── test_graph.py              # 38 unit/integration tests
 
 docs/
-└── DESIGN.md                  # 本文件
+└── DESIGN.md                  # This file
 ```
 
 ## Current Status
 
-- ✅ action/type 体系精简（删除 med、modify_delete）
-- ✅ Router prompt 重写（~200 行，含 action 优先级、模糊词、时间解析、5 个示例）
-- ✅ `_parse_json` 处理 `<think>` 标签（DS V4 Flash tagged reasoning 兼容）
-- ✅ slot-fill 拆分为 8 个 per-type 节点
-- ✅ 单位换算、默认值填充、泛词过滤代码层实现
-- ✅ 38 个测试全部通过
+- ✅ Action/type system simplified (removed med, modify_delete)
+- ✅ Router prompt rewritten (~200 lines, with action priority, vague words, time parsing, 5 examples)
+- ✅ `_parse_json` handles `<think>` tags (DS V4 Flash tagged reasoning compatibility)
+- ✅ Slot-fill split into 8 per-type nodes
+- ✅ Unit conversion, default filling, vague-word filtering implemented at code level
+- ✅ All 38 tests passing
